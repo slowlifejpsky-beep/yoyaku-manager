@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ききがきメモ 使い方</title>
+<style>
+  :root { --bg:#faf7f2; --fg:#2b2a27; --sub:#6b675f; --line:#e3ddd2; --accent:#1f6f78; --card:#ffffff; --code:#f1ece3; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16191a; --fg:#ece8e1; --sub:#a39e94; --line:#2f3435; --accent:#7fcfd8; --card:#1e2223; --code:#262b2c; }
+  }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; line-height:1.8; }
+  main { max-width:720px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:1.6rem; margin:0 0 4px; }
+  h2 { font-size:1.15rem; margin:36px 0 8px; padding-bottom:6px; border-bottom:2px solid var(--accent); }
+  p.lead { color:var(--sub); margin-top:0; }
+  ol, ul { padding-left:1.4em; }
+  li { margin:6px 0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin:12px 0; }
+  code { background:var(--code); padding:2px 6px; border-radius:4px; font-size:.9em; word-break:break-all; }
+  table { width:100%; border-collapse:collapse; margin:8px 0; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { width:34%; color:var(--sub); font-weight:600; }
+  .note { color:var(--sub); font-size:.92em; }
+</style>
+</head>
+<body>
+<main>
+<h1>ききがきメモ</h1>
+<p class="lead">押すだけで録音し、話の内容を約20秒ごとに要約して画面に出すAndroidアプリです。</p>
+
+<h2>できること</h2>
+<table>
+  <tr><th>録音</th><td>赤い「録音」ボタンを押すとすぐ始まります。画面を消しても、他のアプリを使っていても止まりません。通知の「停止して保存」からも止められます。</td></tr>
+  <tr><th>音声の保存</th><td>端末内に <code>audio.aac</code> として保存します(1時間で約14MB)。3秒ごとにディスクへ書き出すので、途中でアプリが落ちても直前までは残ります。</td></tr>
+  <tr><th>リアルタイム要約</th><td>約20秒ごとに音声をGeminiへ送り、文字起こしと要約(要点・決定事項・TODO)を更新します。電波が切れた間の分は、つながったときにまとめて処理します。</td></tr>
+  <tr><th>Googleドライブ保存</th><td>録音を止めると「ききがきメモ」フォルダに、音声ファイルと要約ドキュメント(Googleドキュメント)を自動で保存します。下の「ドライブ連携の準備」が必要です。</td></tr>
+  <tr><th>共有ボタン</th><td>記録の画面右上から、音声とテキストを共有メニューでドライブやNotebookLMアプリに渡せます。こちらは準備なしで使えます。</td></tr>
+</table>
+
+<h2>1. スマホに入れる</h2>
+<ol>
+  <li>スマホのブラウザでGitHubにログインし、このリポジトリの「Actions」タブを開きます。</li>
+  <li>いちばん上の「Build APK」の実行結果を開き、下の「Artifacts」にある <code>kikigaki-memo-apk</code> をダウンロードします。</li>
+  <li>ダウンロードしたzipを開き、中の <code>kikigaki-memo.apk</code> をタップしてインストールします。「提供元不明のアプリ」の許可を聞かれたら許可してください。</li>
+</ol>
+
+<h2>2. Gemini APIキーを入れる(要約に必要)</h2>
+<ol>
+  <li><code>aistudio.google.com</code> を開き、「Get API key」からキーを作ってコピーします。</li>
+  <li>アプリ右上の歯車 →「Gemini APIキー」に貼り付けます。</li>
+</ol>
+<p class="note">キーを入れなくても録音と音声の保存はできます。あとからキーを入れて、記録の画面の「まだ処理していない音声を文字起こし・要約する」を押せば要約を作れます。</p>
+
+<h2>3. ドライブ連携の準備(自動保存を使う場合だけ)</h2>
+<p>Googleの決まりで、アプリがドライブに書き込むには「このアプリは自分のものです」という登録が一度だけ必要です。パソコンのブラウザで行うのが楽です。</p>
+<ol>
+  <li><code>console.cloud.google.com</code> を開き、新しいプロジェクトを作ります(名前は何でも構いません)。</li>
+  <li>「APIとサービス」→「ライブラリ」で <strong>Google Drive API</strong> を探して「有効にする」を押します。</li>
+  <li>「OAuth同意画面」(Google Auth Platform)を設定します。対象は「外部」を選び、「テストユーザー」に自分のGoogleアカウントを追加します。</li>
+  <li>「認証情報」→「認証情報を作成」→「OAuthクライアントID」→ 種類は <strong>Android</strong> を選び、下の2つを入力して作成します。</li>
+</ol>
+<div class="card">
+  <table>
+    <tr><th>パッケージ名</th><td><code>app.kikigaki.memo</code></td></tr>
+    <tr><th>SHA-1</th><td><code>E3:89:C4:6D:4E:29:E3:4B:87:00:0E:EE:90:51:C6:8B:75:73:8E:5F</code></td></tr>
+  </table>
+  <p class="note">同じ値はアプリの設定画面のいちばん下にも表示されます。</p>
+</div>
+<ol start="5">
+  <li>アプリの設定で「Googleドライブと連携する」を押し、アカウントを選んで許可します。</li>
+</ol>
+<p class="note">アプリが触れるのは、このアプリ自身が作ったファイルだけです(ドライブの他のファイルは見えません)。同意画面が「テスト」のままだと、7日ほどで許可が切れて再連携を求められることがあります。気になる場合は同意画面を「本番環境」に切り替えてください。</p>
+
+<h2>知っておくとよいこと</h2>
+<ul>
+  <li>音声はGemini(Google)に送られます。お客様との会話など、録音してよい場面かどうかは事前に確認してください。</li>
+  <li>Geminiの無料枠には1日あたりの回数上限があります。長時間の録音が多い場合は有料枠を検討してください。</li>
+  <li>電話の着信など、他のアプリがマイクを使うと、その間の音声は録れないことがあります。</li>
+  <li>記録を削除すると端末内の音声も消えます。ドライブに保存済みのファイルは残ります。</li>
+</ul>
+</main>
+</body>
+</html>
