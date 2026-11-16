@@ -690,7 +690,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
             val auth = Identity.getAuthorizationClient(ctx).getAuthorizationResultFromIntent(result.data)
             if (auth.accessToken != null) onLinked() else driveMessage = "連携が完了しませんでした"
         } catch (e: Exception) {
-            driveMessage = "連携できませんでした。ドライブ連携の準備(パッケージ名とSHA-1の登録)を確認してください"
+            driveMessage = "連携できませんでした。ドライブ連携の準備(パッケージ名とSHA-1の登録)を確認してください\n詳細: ${e.message ?: e.javaClass.simpleName}"
         }
     }
 
@@ -764,7 +764,7 @@ private fun SettingsScreen(onBack: () -> Unit) {
                                 onLinked()
                             }
                         } catch (e: Exception) {
-                            driveMessage = "連携できませんでした。ドライブ連携の準備(パッケージ名とSHA-1の登録)を確認してください"
+                            driveMessage = "連携できませんでした。ドライブ連携の準備(パッケージ名とSHA-1の登録)を確認してください\n詳細: ${e.message ?: e.javaClass.simpleName}"
                         }
                     }
                 }) { Text("Googleドライブと連携する") }
