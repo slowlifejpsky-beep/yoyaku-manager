@@ -419,7 +419,7 @@ private fun SummaryView(summary: Summary, live: Boolean) {
     ) {
         if (summary.isEmpty) {
             Text(
-                if (live) "話し始めると、約20秒ごとにここへ要約が出ます。" else "要約はまだありません。",
+                if (live) "話し始めて15秒ほどで最初の要約が出て、その後は約30秒ごとに更新されます。" else "要約はまだありません。",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
@@ -469,7 +469,10 @@ private fun TranscriptView(transcript: String, follow: Boolean) {
     }
     Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(16.dp)) {
         if (transcript.isBlank()) {
-            Text("文字起こしはまだありません。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                if (follow) "話し始めて10〜15秒ほどで、ここに文字起こしが出ます。" else "文字起こしはまだありません。",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         } else {
             SelectionContainer { Text(transcript.trim(), lineHeight = 26.sp) }
         }

@@ -12,8 +12,8 @@ android {
         applicationId = "app.kikigaki.memo"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
     }
 
     // ビルドのたびに署名が変わると、上書きインストールとGoogleドライブ連携(SHA-1照合)が

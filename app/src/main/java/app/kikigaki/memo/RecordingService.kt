@@ -74,7 +74,7 @@ class RecordingService : Service() {
         Live.state.value = LiveState(
             phase = Phase.RECORDING,
             sessionId = session.id,
-            status = if (Prefs.apiKey(this).isBlank()) "APIキー未設定のため、音声の保存だけ行っています" else "聞き取り中…",
+            status = if (Prefs.apiKey(this).isBlank()) "APIキー未設定のため、音声の保存だけ行っています" else "聞き取り中…(約10秒ごとに文字起こし、約30秒ごとに要約を更新)",
         )
         job = scope.launch {
             val ticker = launch {
@@ -121,6 +121,7 @@ class RecordingService : Service() {
         var failures = 0
         var lastChunkAt = SystemClock.elapsedRealtime()
         var lastMetaAt = 0L
+        var lastSummaryAt = 0L
         var lastError: String? = null
         skipRequested = false
 
@@ -182,7 +183,7 @@ class RecordingService : Service() {
                         }
                         saveMeta(true)
                         Live.update {
-                            it.copy(transcript = transcript, error = null, status = if (recording) "聞き取り中…" else "仕上げ中…")
+                            it.copy(transcript = transcript, error = null, status = if (recording) "聞き取り中…(約10秒ごとに文字起こし、約30秒ごとに要約を更新)" else "仕上げ中…")
                         }
                     } catch (e: Exception) {
                         failures++
@@ -196,8 +197,11 @@ class RecordingService : Service() {
                 }
             }
 
-            if (dirty) {
+            val summaryDue = !recording || summary.isEmpty ||
+                SystemClock.elapsedRealtime() - lastSummaryAt >= SUMMARY_INTERVAL_MS
+            if (dirty && summaryDue) {
                 try {
+                    lastSummaryAt = SystemClock.elapsedRealtime()
                     val fullText = transcript
                     val previous = summary
                     summary = skippable(recording) { Gemini.summarize(key, model, fullText, previous) }
@@ -356,7 +360,9 @@ class RecordingService : Service() {
         private const val CHANNEL = "recording"
         private const val NOTIF_ID = 1
 
-        private const val CHUNK_INTERVAL_MS = 20_000L
+        private const val CHUNK_INTERVAL_MS = 10_000L
+        /** 録音中の要約の作り直しは、回数を抑えるためこの間隔を空ける(文字起こしは毎回出す) */
+        private const val SUMMARY_INTERVAL_MS = 30_000L
         /** 通信が切れて溜まった分は、最大で約2分ぶんずつまとめて送る */
         private const val MAX_CHUNK_BYTES = AacRecorder.APPROX_BYTES_PER_SEC * 120
         /** 約0.5秒未満は送らない */
