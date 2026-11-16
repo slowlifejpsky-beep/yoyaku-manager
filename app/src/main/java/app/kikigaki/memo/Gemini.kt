@@ -31,7 +31,35 @@ object Gemini {
 
     private const val MAX_TRANSCRIPT_CHARS = 40_000
 
+    /** AAC のままでは受け付けられないと分かったら true。以後は最初から WAV で送る */
+    @Volatile private var useWav = false
+
     fun transcribe(key: String, model: String, audio: ByteArray, previous: String): String {
+        var aacError: GeminiException? = null
+        if (!useWav) {
+            try {
+                return transcribeAs(key, model, "audio/aac", audio, previous)
+            } catch (e: GeminiException) {
+                // 形式が原因かもしれない失敗(400 / 5xx)だけ、WAV に変換して送り直す
+                if (e.code != 400 && e.code < 500) throw e
+                aacError = e
+            }
+        }
+        val wav = try {
+            AacDecoder.toWav(audio)
+        } catch (e: Exception) {
+            throw aacError ?: GeminiException(0, "音声を変換できませんでした: ${e.message}")
+        }
+        val text = try {
+            transcribeAs(key, model, "audio/wav", wav, previous)
+        } catch (e: GeminiException) {
+            throw GeminiException(e.code, (e.message ?: "") + (aacError?.let { " / AAC: ${it.message}" } ?: ""))
+        }
+        if (aacError?.code == 400) useWav = true
+        return text
+    }
+
+    private fun transcribeAs(key: String, model: String, mime: String, audio: ByteArray, previous: String): String {
         val context = previous.takeLast(400).ifBlank { "(なし)" }
         val parts = JSONArray()
             .put(JSONObject().put("text", "$TRANSCRIBE_PROMPT\n\n直前までの文字起こし:\n$context"))
@@ -39,7 +67,7 @@ object Gemini {
                 JSONObject().put(
                     "inline_data",
                     JSONObject()
-                        .put("mime_type", "audio/aac")
+                        .put("mime_type", mime)
                         .put("data", Base64.encodeToString(audio, Base64.NO_WRAP))
                 )
             )
@@ -153,10 +181,16 @@ object Gemini {
                 val detail = runCatching {
                     JSONObject(text).getJSONObject("error").getString("message")
                 }.getOrDefault("")
-                if (code == 400 && useThinkingOff && detail.contains("thinking", ignoreCase = true)) {
+                if (code == 400 && useThinkingOff && !detail.contains("API key", ignoreCase = true)) {
                     // このモデルは「考える時間を切る」指定に対応していない。外してやり直す
+                    // 外して通ったときだけ「このモデルは非対応」と覚える
                     thinkingOff = false
-                    return callOnce(key, model, parts, schema)
+                    try {
+                        return callOnce(key, model, parts, schema)
+                    } catch (e: GeminiException) {
+                        if (e.code == 400) thinkingOff = true
+                        throw e
+                    }
                 }
                 throw GeminiException(code, friendly(code, detail, model))
             }
@@ -186,6 +220,6 @@ object Gemini {
         code == 404 -> "モデル「$model」が見つかりません。設定のモデル名を確認してください"
         code == 429 -> "Geminiの利用上限に達しました($model)。少し待って続きから処理します"
         code >= 500 -> "Gemini側が混み合っています($code $model)。もう一度試します ${detail.take(80)}".trim()
-        else -> "Geminiエラー($code) $detail".trim()
+        else -> "Geminiエラー($code $model) $detail".trim()
     }
 }

@@ -357,8 +357,8 @@ class RecordingService : Service() {
         private const val NOTIF_ID = 1
 
         private const val CHUNK_INTERVAL_MS = 20_000L
-        /** 通信が切れて溜まった分は、最大で約5分ぶんずつまとめて送る */
-        private const val MAX_CHUNK_BYTES = AacRecorder.APPROX_BYTES_PER_SEC * 300
+        /** 通信が切れて溜まった分は、最大で約2分ぶんずつまとめて送る */
+        private const val MAX_CHUNK_BYTES = AacRecorder.APPROX_BYTES_PER_SEC * 120
         /** 約0.5秒未満は送らない */
         private const val MIN_CHUNK_BYTES = 2000
         private const val MAX_FINAL_RETRIES = 3

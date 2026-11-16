@@ -778,7 +778,8 @@ private fun SettingsScreen(onBack: () -> Unit) {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
             Text(
-                "準備で登録する値\nパッケージ名: ${ctx.packageName}\nSHA-1: $SIGNING_SHA1",
+                "準備で登録する値\nパッケージ名: ${ctx.packageName}\nSHA-1: $SIGNING_SHA1\n\nアプリのバージョン: " +
+                    (runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?"),
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
