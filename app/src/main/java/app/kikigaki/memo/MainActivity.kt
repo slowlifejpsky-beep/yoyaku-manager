@@ -345,14 +345,19 @@ private fun LiveScreen(live: LiveState, onBack: () -> Unit) {
                 Button(
                     onClick = {
                         ctx.startService(
-                            Intent(ctx, RecordingService::class.java).setAction(RecordingService.ACTION_STOP)
+                            Intent(ctx, RecordingService::class.java).setAction(
+                                if (recording) RecordingService.ACTION_STOP else RecordingService.ACTION_SKIP
+                            )
                         )
                     },
-                    enabled = recording,
-                    colors = ButtonDefaults.buttonColors(containerColor = RecordRed, contentColor = Color.White),
+                    colors = if (recording) {
+                        ButtonDefaults.buttonColors(containerColor = RecordRed, contentColor = Color.White)
+                    } else {
+                        ButtonDefaults.buttonColors()
+                    },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                 ) {
-                    Text(if (recording) "■ 停止して保存" else "保存しています…", fontSize = 18.sp)
+                    Text(if (recording) "■ 停止して保存" else "待たずに終了(要約はあとで作れます)", fontSize = 16.sp)
                 }
             }
         },

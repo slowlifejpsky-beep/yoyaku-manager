@@ -89,8 +89,44 @@ object Gemini {
             .put("required", JSONArray(listOf("title", "overview", "points", "decisions", "todos")))
     }
 
+    /** 指定モデルが混雑・停止しているときに順に試す代わりのモデル */
+    private val FALLBACK_MODELS = listOf("gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite")
+    private const val STICKY_MS = 5 * 60 * 1000L
+
+    /** 代わりのモデルで成功したら、しばらくはそちらを先に使う(毎回つまずいて待たされないように) */
+    @Volatile private var stickyModel: String? = null
+    @Volatile private var stickyUntil = 0L
+    /** 「考える時間」を切る指定が使えないモデルだと分かったら false にする */
+    @Volatile private var thinkingOff = true
+
     private fun call(key: String, model: String, parts: JSONArray, schema: JSONObject?): String {
+        val sticky = stickyModel?.takeIf { android.os.SystemClock.elapsedRealtime() < stickyUntil }
+        val order = (listOfNotNull(sticky) + model + FALLBACK_MODELS).distinct()
+        var first: GeminiException? = null
+        for (m in order) {
+            try {
+                val text = callOnce(key, m, parts, schema)
+                if (m != model) {
+                    stickyModel = m
+                    stickyUntil = android.os.SystemClock.elapsedRealtime() + STICKY_MS
+                } else {
+                    stickyModel = null
+                }
+                return text
+            } catch (e: GeminiException) {
+                if (first == null || m == model) first = e
+                // 混雑(5xx)・上限(429)・モデルなし(404)・応答なし のときだけ別モデルを試す
+                val retryable = e.code >= 500 || e.code == 429 || e.code == 404 || e.code == -2
+                if (!retryable) throw e
+            }
+        }
+        throw first!!
+    }
+
+    private fun callOnce(key: String, model: String, parts: JSONArray, schema: JSONObject?): String {
+        val useThinkingOff = thinkingOff
         val gen = JSONObject().put("temperature", 0.2)
+        if (useThinkingOff) gen.put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
         if (schema != null) gen.put("responseMimeType", "application/json").put("responseSchema", schema)
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
@@ -102,8 +138,8 @@ object Gemini {
         val conn = url.openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 120_000
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 45_000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             conn.setRequestProperty("x-goog-api-key", key)
@@ -117,6 +153,11 @@ object Gemini {
                 val detail = runCatching {
                     JSONObject(text).getJSONObject("error").getString("message")
                 }.getOrDefault("")
+                if (code == 400 && useThinkingOff && detail.contains("thinking", ignoreCase = true)) {
+                    // このモデルは「考える時間を切る」指定に対応していない。外してやり直す
+                    thinkingOff = false
+                    return callOnce(key, model, parts, schema)
+                }
                 throw GeminiException(code, friendly(code, detail, model))
             }
             val candidates = JSONObject(text).optJSONArray("candidates") ?: return ""
@@ -132,7 +173,7 @@ object Gemini {
         } catch (e: UnknownHostException) {
             throw GeminiException(-1, "ネットにつながっていません。つながり次第、続きから処理します")
         } catch (e: SocketTimeoutException) {
-            throw GeminiException(-1, "通信が混み合っています。もう一度試します")
+            throw GeminiException(-2, "Geminiの応答がありません($model)。もう一度試します")
         } finally {
             conn.disconnect()
         }
@@ -143,8 +184,8 @@ object Gemini {
             "Gemini APIキーが正しくありません。設定を確認してください"
         code == 401 || code == 403 -> "Gemini APIキーが使えません。設定を確認してください"
         code == 404 -> "モデル「$model」が見つかりません。設定のモデル名を確認してください"
-        code == 429 -> "Geminiの利用上限に達しました。少し待って続きから処理します"
-        code >= 500 -> "Gemini側が混み合っています。もう一度試します"
+        code == 429 -> "Geminiの利用上限に達しました($model)。少し待って続きから処理します"
+        code >= 500 -> "Gemini側が混み合っています($code $model)。もう一度試します ${detail.take(80)}".trim()
         else -> "Geminiエラー($code) $detail".trim()
     }
 }

@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -31,10 +32,13 @@ import kotlin.math.min
 class RecordingService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
     private var recorder: AacRecorder? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var startedWall = 0L
+    /** 仕上げ(残りの文字起こし・要約)を待たずに終える指示 */
+    @Volatile private var skipRequested = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -42,6 +46,7 @@ class RecordingService : Service() {
         when (intent?.action) {
             ACTION_START -> startRecording()
             ACTION_STOP -> recorder?.stop()
+            ACTION_SKIP -> skipRequested = true
             ACTION_PROCESS -> startProcessing(intent?.getStringExtra(EXTRA_ID))
         }
         if (job?.isActive != true) shutdown()
@@ -117,6 +122,7 @@ class RecordingService : Service() {
         var lastChunkAt = SystemClock.elapsedRealtime()
         var lastMetaAt = 0L
         var lastError: String? = null
+        skipRequested = false
 
         fun saveMeta(force: Boolean) {
             val now = SystemClock.elapsedRealtime()
@@ -135,6 +141,10 @@ class RecordingService : Service() {
             if (!recording && Live.state.value.phase == Phase.RECORDING) {
                 Live.update { it.copy(phase = Phase.FINISHING, level = 0f, status = "仕上げ中…") }
                 updateNotification("要約を仕上げています…")
+            }
+            if (!recording && skipRequested) {
+                lastError = "要約を待たずに終了しました。下のボタンからあとで作れます"
+                break
             }
             val total = if (recording) rec!!.bytesWritten else session.audio.length()
             val pending = total - processed
@@ -160,7 +170,8 @@ class RecordingService : Service() {
                     if (!recording) processed = total
                 } else {
                     try {
-                        val text = withContext(Dispatchers.IO) { Gemini.transcribe(key, model, chunk, transcript) }
+                        val before = transcript
+                        val text = skippable(recording) { Gemini.transcribe(key, model, chunk, before) }
                         processed += chunk.size
                         failures = 0
                         lastError = null
@@ -179,7 +190,7 @@ class RecordingService : Service() {
                         Live.update { it.copy(error = lastError) }
                         if (!recording && failures >= MAX_FINAL_RETRIES) break
                         // 録音は続けたまま、少し待って同じ所からやり直す(未処理分は次回まとめて送る)
-                        delay(min(30_000L, 3000L * failures))
+                        delay(if (recording) min(30_000L, 3000L * failures) else 1500L)
                         continue
                     }
                 }
@@ -187,7 +198,9 @@ class RecordingService : Service() {
 
             if (dirty) {
                 try {
-                    summary = withContext(Dispatchers.IO) { Gemini.summarize(key, model, transcript, summary) }
+                    val fullText = transcript
+                    val previous = summary
+                    summary = skippable(recording) { Gemini.summarize(key, model, fullText, previous) }
                     withContext(Dispatchers.IO) { session.writeSummary(summary) }
                     dirty = false
                     failures = 0
@@ -199,7 +212,7 @@ class RecordingService : Service() {
                     lastError = e.message ?: "通信エラー"
                     Live.update { it.copy(error = lastError) }
                     if (!recording && failures >= MAX_FINAL_RETRIES) break
-                    delay(min(30_000L, 3000L * failures))
+                    delay(if (recording) min(30_000L, 3000L * failures) else 1500L)
                     continue
                 }
             }
@@ -224,6 +237,19 @@ class RecordingService : Service() {
         }
 
         Live.state.value = LiveState(phase = Phase.IDLE, sessionId = session.id, error = lastError)
+    }
+
+    /**
+     * 通信を別スレッドで行い、仕上げ中に「待たずに終了」が押されたら結果を待つのをやめる。
+     * (通信そのものは途中で止められないので、裏で終わるのを放っておく)
+     */
+    private suspend fun <T> skippable(recording: Boolean, block: () -> T): T {
+        val work = ioScope.async { block() }
+        while (!work.isCompleted) {
+            if (!recording && skipRequested) throw IllegalStateException("skipped")
+            delay(150)
+        }
+        return work.await()
     }
 
     private fun readChunk(session: Session, offset: Long, length: Int): ByteArray {
@@ -324,6 +350,7 @@ class RecordingService : Service() {
     companion object {
         const val ACTION_START = "app.kikigaki.memo.START"
         const val ACTION_STOP = "app.kikigaki.memo.STOP"
+        const val ACTION_SKIP = "app.kikigaki.memo.SKIP"
         const val ACTION_PROCESS = "app.kikigaki.memo.PROCESS"
         const val EXTRA_ID = "id"
         private const val CHANNEL = "recording"
