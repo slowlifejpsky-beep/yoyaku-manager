@@ -36,9 +36,8 @@ class RecordWidget : AppWidgetProvider() {
             val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             when (state.phase) {
                 Phase.IDLE -> {
-                    views.setInt(R.id.widget_root, "setBackgroundResource", R.drawable.widget_bg_idle)
+                    views.setInt(R.id.widget_button, "setBackgroundResource", R.drawable.widget_bg_idle)
                     views.setImageViewResource(R.id.widget_icon, R.drawable.ic_stat_mic)
-                    views.setTextViewText(R.id.widget_label, context.getString(R.string.widget_label_record))
                     views.setViewVisibility(R.id.widget_time, View.GONE)
                     views.setChronometer(R.id.widget_time, SystemClock.elapsedRealtime(), null, false)
                     views.setOnClickPendingIntent(
@@ -53,9 +52,8 @@ class RecordWidget : AppWidgetProvider() {
                     )
                 }
                 Phase.RECORDING -> {
-                    views.setInt(R.id.widget_root, "setBackgroundResource", R.drawable.widget_bg_active)
+                    views.setInt(R.id.widget_button, "setBackgroundResource", R.drawable.widget_bg_active)
                     views.setImageViewResource(R.id.widget_icon, R.drawable.ic_stat_stop)
-                    views.setTextViewText(R.id.widget_label, context.getString(R.string.widget_label_stop))
                     views.setViewVisibility(R.id.widget_time, View.VISIBLE)
                     views.setChronometer(
                         R.id.widget_time, SystemClock.elapsedRealtime() - state.elapsedMs, null, true
@@ -70,9 +68,8 @@ class RecordWidget : AppWidgetProvider() {
                     )
                 }
                 Phase.FINISHING -> {
-                    views.setInt(R.id.widget_root, "setBackgroundResource", R.drawable.widget_bg_active)
+                    views.setInt(R.id.widget_button, "setBackgroundResource", R.drawable.widget_bg_active)
                     views.setImageViewResource(R.id.widget_icon, R.drawable.ic_stat_stop)
-                    views.setTextViewText(R.id.widget_label, context.getString(R.string.widget_label_finishing))
                     views.setViewVisibility(R.id.widget_time, View.GONE)
                     views.setChronometer(R.id.widget_time, SystemClock.elapsedRealtime(), null, false)
                     views.setOnClickPendingIntent(
