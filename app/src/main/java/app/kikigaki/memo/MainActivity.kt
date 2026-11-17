@@ -157,6 +157,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (savedInstanceState == null) handleQuickAction(intent)
+        // ホーム画面のウィジェットを今の状態で描き直す(更新直後に表示が崩れていても直る)
+        RecordWidget.updateAll(this)
         setContent {
             val colors = if (isSystemInDarkTheme()) {
                 darkColorScheme(primary = Color(0xFF7FCFD8), secondary = Color(0xFFE0B98A))
