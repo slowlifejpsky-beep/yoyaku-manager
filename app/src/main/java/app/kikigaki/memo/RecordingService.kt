@@ -40,6 +40,12 @@ class RecordingService : Service() {
     /** 仕上げ(残りの文字起こし・要約)を待たずに終える指示 */
     @Volatile private var skipRequested = false
 
+    /** 話すそばから文字起こしする接続。使わない・使えないときは null */
+    private var liveTranscriber: LiveTranscriber? = null
+    /** いまの録音の文字起こし全文と、「要約に未反映の文字起こしがある」印 */
+    private var transcript = ""
+    private var dirty = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -62,24 +68,33 @@ class RecordingService : Service() {
         }
         val session = Sessions.create(this)
         val rec = AacRecorder(session.audio)
+        val apiKey = Prefs.apiKey(this)
+        val lt = if (apiKey.isNotBlank() && Prefs.liveEnabled(this)) LiveTranscriber(apiKey, Prefs.liveModel(this)) else null
+        if (lt != null) rec.onPcm = lt::offer
         try {
             rec.start()
         } catch (e: Exception) {
+            lt?.close()
             session.delete()
             Live.state.value = LiveState(error = "録音を開始できません: ${e.message}")
             return
         }
         recorder = rec
+        liveTranscriber = lt
+        lt?.start()
+        transcript = ""
+        dirty = false
         acquireWakeLock()
         Live.state.value = LiveState(
             phase = Phase.RECORDING,
             sessionId = session.id,
-            status = if (Prefs.apiKey(this).isBlank()) "APIキー未設定のため、音声の保存だけ行っています" else "聞き取り中…(約10秒ごとに文字起こし、約30秒ごとに要約を更新)",
+            status = if (Prefs.apiKey(this).isBlank()) "APIキー未設定のため、音声の保存だけ行っています" else recordingStatus(),
         )
         job = scope.launch {
             val ticker = launch {
                 while (rec.isRunning) {
                     Live.update { it.copy(elapsedMs = rec.elapsedMs, level = rec.level) }
+                    drainLive(session)
                     delay(150)
                 }
             }
@@ -115,9 +130,9 @@ class RecordingService : Service() {
     private suspend fun runSession(session: Session, rec: AacRecorder?) {
         var meta = session.readMeta()
         var processed = meta.processedBytes
-        var transcript = session.readTranscript()
+        transcript = session.readTranscript()
         var summary = session.readSummary()
-        var dirty = false
+        dirty = false
         var failures = 0
         var lastChunkAt = SystemClock.elapsedRealtime()
         var lastMetaAt = 0L
@@ -142,12 +157,25 @@ class RecordingService : Service() {
             if (!recording && Live.state.value.phase == Phase.RECORDING) {
                 Live.update { it.copy(phase = Phase.FINISHING, level = 0f, status = "仕上げ中…") }
                 updateNotification("要約を仕上げています…")
+                liveTranscriber?.let { lt ->
+                    // 最後まで流せていたなら、残りの文字が届くのを少し待って全区間を処理済みにする
+                    val wasStreaming = lt.streaming
+                    withContext(Dispatchers.IO) { lt.finish() }
+                    drainLive(session)
+                    liveTranscriber = null
+                    if (wasStreaming) processed = session.audio.length()
+                }
             }
             if (!recording && skipRequested) {
                 lastError = "要約を待たずに終了しました。下のボタンからあとで作れます"
                 break
             }
             val total = if (recording) rec!!.bytesWritten else session.audio.length()
+            val lt = liveTranscriber
+            // リアルタイム接続が生きている間は、そこまでの音声は文字起こし済みとして扱う
+            if (recording && lt != null && lt.streaming) processed = total
+            // 切れて間もない間はつなぎ直しを待つ。長引く・使えないときだけ従来の方式で補う
+            val liveCovers = recording && lt != null && !lt.failed && lt.downForMs() < LIVE_GRACE_MS
             val pending = total - processed
             val key = Prefs.apiKey(this)
             val model = Prefs.model(this)
@@ -161,7 +189,7 @@ class RecordingService : Service() {
 
             val now = SystemClock.elapsedRealtime()
             val due = now - lastChunkAt >= CHUNK_INTERVAL_MS
-            if (pending > 0 && (due || !recording)) {
+            if (pending > 0 && (due || !recording) && !liveCovers) {
                 val chunk = withContext(Dispatchers.IO) {
                     readChunk(session, processed, min(pending, MAX_CHUNK_BYTES).toInt())
                 }
@@ -174,6 +202,7 @@ class RecordingService : Service() {
                         val before = transcript
                         val text = skippable(recording) { Gemini.transcribe(key, model, chunk, before) }
                         processed += chunk.size
+                        liveTranscriber?.dropBacklog()
                         failures = 0
                         lastError = null
                         if (text.isNotBlank()) {
@@ -183,7 +212,7 @@ class RecordingService : Service() {
                         }
                         saveMeta(true)
                         Live.update {
-                            it.copy(transcript = transcript, error = null, status = if (recording) "聞き取り中…(約10秒ごとに文字起こし、約30秒ごとに要約を更新)" else "仕上げ中…")
+                            it.copy(transcript = transcript, error = null, status = if (recording) recordingStatus() else "仕上げ中…")
                         }
                     } catch (e: Exception) {
                         failures++
@@ -254,6 +283,33 @@ class RecordingService : Service() {
             delay(150)
         }
         return work.await()
+    }
+
+    /** リアルタイム接続から届いた文字を、全文とファイルと画面に反映する */
+    private suspend fun drainLive(session: Session) {
+        val lt = liveTranscriber ?: return
+        val lines = lt.takeCommitted()
+        if (lines.isNotEmpty()) {
+            val text = lines.joinToString("\n")
+            transcript = if (transcript.isBlank()) text else transcript.trimEnd() + "\n" + text
+            dirty = true
+            withContext(Dispatchers.IO) { session.appendTranscript(text) }
+        }
+        val pendingText = lt.pendingText()
+        val shown = if (pendingText.isEmpty()) transcript else (transcript.trimEnd() + "\n" + pendingText).trim()
+        Live.update {
+            if (it.phase == Phase.RECORDING) it.copy(transcript = shown, status = recordingStatus()) else it.copy(transcript = shown)
+        }
+    }
+
+    private fun recordingStatus(): String {
+        val lt = liveTranscriber
+        return when {
+            lt == null -> "聞き取り中…(約10秒ごとに文字起こし、約30秒ごとに要約を更新)"
+            lt.streaming -> "リアルタイムで文字起こし中(${lt.model})"
+            lt.failed -> "リアルタイム接続ができないため、約10秒ごとの方式で文字起こし中(${lt.lastError ?: "原因不明"})"
+            else -> "リアルタイム接続中…" + (lt.lastError?.let { "($it)" } ?: "")
+        }
     }
 
     private fun readChunk(session: Session, offset: Long, length: Int): ByteArray {
@@ -342,6 +398,8 @@ class RecordingService : Service() {
     }
 
     override fun onDestroy() {
+        liveTranscriber?.close()
+        liveTranscriber = null
         recorder?.stop()
         scope.cancel()
         runCatching { wakeLock?.release() }
@@ -367,6 +425,8 @@ class RecordingService : Service() {
         private const val MAX_CHUNK_BYTES = AacRecorder.APPROX_BYTES_PER_SEC * 120
         /** 約0.5秒未満は送らない */
         private const val MIN_CHUNK_BYTES = 2000
+        /** リアルタイム接続が切れても、この時間まではつなぎ直しを待つ */
+        private const val LIVE_GRACE_MS = 15_000L
         private const val MAX_FINAL_RETRIES = 3
     }
 }

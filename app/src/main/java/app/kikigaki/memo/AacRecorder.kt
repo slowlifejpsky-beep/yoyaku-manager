@@ -33,6 +33,9 @@ class AacRecorder(private val out: File) {
     @Volatile var error: String? = null
         private set
 
+    /** 圧縮前の音声(16kHz/16bit/モノラル)を受け取りたい場合に設定する。録音スレッドから呼ばれる */
+    @Volatile var onPcm: ((ByteArray, Int) -> Unit)? = null
+
     @Volatile private var running = false
     private var worker: Thread? = null
 
@@ -101,6 +104,7 @@ class AacRecorder(private val out: File) {
                     i += 2
                 }
                 level = min(1f, peak / 32768f)
+                onPcm?.let { cb -> runCatching { cb(pcm, n) } }
 
                 feed(codec, pcm, n, samples * 1_000_000L / SAMPLE_RATE, info, fos)
                 samples += n / 2

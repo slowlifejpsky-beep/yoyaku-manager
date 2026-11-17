@@ -87,6 +87,12 @@ object Prefs {
         sp(c).getString("model", "")!!.trim().ifEmpty { DEFAULT_MODEL }
     fun setModel(c: Context, v: String) = sp(c).edit().putString("model", v.trim()).apply()
 
+    fun liveEnabled(c: Context): Boolean = sp(c).getBoolean("liveEnabled", true)
+    fun setLiveEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("liveEnabled", v).apply()
+
+    fun liveModel(c: Context): String = sp(c).getString("liveModel", "")!!.trim()
+    fun setLiveModel(c: Context, v: String) = sp(c).edit().putString("liveModel", v.trim()).apply()
+
     fun driveLinked(c: Context): Boolean = sp(c).getBoolean("driveLinked", false)
     fun setDriveLinked(c: Context, v: Boolean) = sp(c).edit().putBoolean("driveLinked", v).apply()
 

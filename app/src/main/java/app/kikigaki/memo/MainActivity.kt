@@ -681,6 +681,8 @@ private fun SettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var apiKey by remember { mutableStateOf(Prefs.apiKey(ctx)) }
     var model by remember { mutableStateOf(Prefs.model(ctx)) }
+    var liveOn by remember { mutableStateOf(Prefs.liveEnabled(ctx)) }
+    var liveModel by remember { mutableStateOf(Prefs.liveModel(ctx)) }
     var linked by remember { mutableStateOf(Prefs.driveLinked(ctx)) }
     var auto by remember { mutableStateOf(Prefs.driveAuto(ctx)) }
     var driveMessage by remember { mutableStateOf<String?>(null) }
@@ -742,6 +744,23 @@ private fun SettingsScreen(onBack: () -> Unit) {
                 "ふだんは「${Prefs.DEFAULT_MODEL}」のままで大丈夫です。空にすると自動でこの値に戻ります。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("話すそばから文字起こしする(Live API)", modifier = Modifier.weight(1f))
+                Switch(checked = liveOn, onCheckedChange = { liveOn = it; Prefs.setLiveEnabled(ctx, it) })
+            }
+            Text(
+                "オフにすると、約10秒ごとにまとめて文字起こしする方式になります。オンでもつながらないときは自動でその方式に切り替わります。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = liveModel,
+                onValueChange = { liveModel = it; Prefs.setLiveModel(ctx, it) },
+                label = { Text("Live API のモデル名(空欄で自動)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
             )
 
             Spacer(Modifier.height(8.dp))
