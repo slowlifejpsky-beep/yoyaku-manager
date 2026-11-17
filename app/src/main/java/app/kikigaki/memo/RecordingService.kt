@@ -65,6 +65,7 @@ class RecordingService : Service() {
             ACTION_START -> startRecording()
             ACTION_STOP -> recorder?.stop()
             ACTION_SKIP -> skipRequested = true
+            ACTION_LOCATE -> locateCurrent()
             ACTION_PROCESS -> startProcessing(intent?.getStringExtra(EXTRA_ID))
         }
         if (job?.isActive != true) shutdown()
@@ -94,15 +95,7 @@ class RecordingService : Service() {
         recorder = rec
         liveTranscriber = lt
         lt?.start()
-        if (Prefs.saveLocation(this)) {
-            // 録音を始めた場所を記録する(取れなくても録音には影響しない)
-            scope.launch {
-                val place = Places.current(this@RecordingService) ?: return@launch
-                withContext(Dispatchers.IO) {
-                    synchronized(session) { session.writeMeta(session.readMeta().copy(place = place)) }
-                }
-            }
-        }
+        if (Prefs.saveLocation(this)) locate(session)
         transcript = ""
         dirty = false
         acquireWakeLock()
@@ -335,6 +328,26 @@ class RecordingService : Service() {
         }
     }
 
+    /** 録音を始めた場所を記録する(取れなくても録音には影響しない) */
+    private fun locate(session: Session) {
+        scope.launch {
+            val place = Places.current(this@RecordingService) ?: return@launch
+            withContext(Dispatchers.IO) {
+                synchronized(session) {
+                    if (session.dir.isDirectory) session.writeMeta(session.readMeta().copy(place = place))
+                }
+            }
+        }
+    }
+
+    /** 録音を始めたあとで位置情報が許可されたとき、いまの録音に場所を付ける */
+    private fun locateCurrent() {
+        val state = Live.state.value
+        if (state.phase == Phase.IDLE) return
+        val session = state.sessionId?.let { Sessions.get(this, it) } ?: return
+        if (session.readMeta().place == null) locate(session)
+    }
+
     private fun readChunk(session: Session, offset: Long, length: Int): ByteArray {
         val buf = ByteArray(length)
         var read = 0
@@ -437,6 +450,7 @@ class RecordingService : Service() {
         const val ACTION_START = "app.kikigaki.memo.START"
         const val ACTION_STOP = "app.kikigaki.memo.STOP"
         const val ACTION_SKIP = "app.kikigaki.memo.SKIP"
+        const val ACTION_LOCATE = "app.kikigaki.memo.LOCATE"
         const val ACTION_PROCESS = "app.kikigaki.memo.PROCESS"
         const val EXTRA_ID = "id"
         private const val CHANNEL = "recording"

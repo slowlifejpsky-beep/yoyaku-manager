@@ -119,7 +119,8 @@ private val driveProgress = mutableStateMapOf<String, String>()
 
 class MainActivity : ComponentActivity() {
 
-    private val quickPermissionLauncher =
+    /** マイクがまだ許可されていないとき: 許可をもらってから録音を始める */
+    private val recordPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             if (hasPermission(this, Manifest.permission.RECORD_AUDIO)) {
                 startRecording(this)
@@ -127,6 +128,38 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(this, "録音するにはマイクの許可が必要です", Toast.LENGTH_LONG).show()
             }
         }
+
+    /** 録音を始めたあとで位置情報だけ尋ねる。許可されたら、いまの録音に場所を付ける */
+    private val locationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            if (Places.granted(this)) {
+                startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_LOCATE))
+            }
+        }
+
+    /**
+     * 録音を始める。アプリの録音ボタン・ウィジェット・ショートカットの共通の入口。
+     * マイクが許可済みなら待たずにすぐ始め、位置情報の確認はそのあとに出す。
+     */
+    fun beginRecording() {
+        if (Live.state.value.phase != Phase.IDLE) return
+        val needLocation = Prefs.saveLocation(this) && !Places.granted(this) && !Prefs.locationAsked(this)
+        if (hasPermission(this, Manifest.permission.RECORD_AUDIO)) {
+            startRecording(this)
+            if (needLocation) {
+                Prefs.setLocationAsked(this)
+                locationPermissionLauncher.launch(Places.permissions())
+            }
+        } else {
+            val ask = buildList {
+                add(Manifest.permission.RECORD_AUDIO)
+                if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+                if (needLocation) addAll(Places.permissions())
+            }
+            if (needLocation) Prefs.setLocationAsked(this)
+            recordPermissionLauncher.launch(ask.toTypedArray())
+        }
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -148,11 +181,7 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
-        if (phase != Phase.IDLE) return
-        val ask = permissionsToAsk(this)
-        // マイクさえ許可済みなら、ほかの許可は聞かずにすぐ始める(ワンタップ録音を優先)
-        if (hasPermission(this, Manifest.permission.RECORD_AUDIO)) startRecording(this)
-        else quickPermissionLauncher.launch(ask)
+        beginRecording()
     }
 
     companion object {
@@ -260,19 +289,8 @@ private fun HomeScreen(
         }
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        if (hasPermission(ctx, Manifest.permission.RECORD_AUDIO)) {
-            startRecording(ctx)
-        } else {
-            Toast.makeText(ctx, "録音するにはマイクの許可が必要です", Toast.LENGTH_LONG).show()
-        }
-    }
-
     fun onRecord() {
-        val ask = permissionsToAsk(ctx)
-        if (ask.isEmpty()) startRecording(ctx) else permissionLauncher.launch(ask)
+        (ctx as? MainActivity)?.beginRecording() ?: startRecording(ctx)
     }
 
     Scaffold(
@@ -432,19 +450,6 @@ private fun HomeScreen(
             }
         }
     }
-}
-
-/** 録音前に尋ねる許可。位置情報は設定がオンで、まだ一度も尋ねていないときだけ */
-private fun permissionsToAsk(ctx: Context): Array<String> {
-    val wanted = buildList {
-        add(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-        if (Prefs.saveLocation(ctx) && !Places.granted(ctx) && !Prefs.locationAsked(ctx)) {
-            addAll(Places.permissions())
-            Prefs.setLocationAsked(ctx)
-        }
-    }
-    return wanted.filter { !hasPermission(ctx, it) }.toTypedArray()
 }
 
 private fun hasPermission(ctx: Context, permission: String) =
@@ -843,7 +848,31 @@ private fun SettingsScreen(onBack: () -> Unit) {
     var locationGranted by remember { mutableStateOf(Places.granted(ctx)) }
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { locationGranted = Places.granted(ctx) }
+    ) {
+        locationGranted = Places.granted(ctx)
+        val activity = ctx as? Activity
+        val systemWillAskAgain = activity != null &&
+            Places.permissions().any { p -> activity.shouldShowRequestPermissionRationale(p) }
+        if (!locationGranted && !systemWillAskAgain) {
+            // 何度か断るとAndroidは確認を出さなくなるので、アプリの設定画面を開く
+            Toast.makeText(ctx, "「権限」→「位置情報」→「アプリの使用中のみ許可」を選んでください", Toast.LENGTH_LONG).show()
+            runCatching {
+                ctx.startActivity(
+                    Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.fromParts("package", ctx.packageName, null))
+                )
+            }
+        }
+    }
+    // 設定アプリで許可して戻ってきたときに表示を合わせる
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) locationGranted = Places.granted(ctx)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     var liveModel by remember { mutableStateOf(Prefs.liveModel(ctx)) }
     var linked by remember { mutableStateOf(Prefs.driveLinked(ctx)) }
     var auto by remember { mutableStateOf(Prefs.driveAuto(ctx)) }
@@ -942,11 +971,17 @@ private fun SettingsScreen(onBack: () -> Unit) {
                 when {
                     !saveLocation -> "オフのあいだは場所を記録しません。"
                     locationGranted -> "記録の画面に住所が出て、タップするとGoogleマップで開きます。ドライブの要約ドキュメントにも地図へのリンクが入ります。"
-                    else -> "位置情報が許可されていないため、場所は記録されません。スマホの設定 → アプリ → ききがきメモ → 権限 から「位置情報」を許可してください。"
+                    else -> "位置情報が許可されていないため、場所は記録されません。下のボタンから許可してください。"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (saveLocation && !locationGranted) {
+                Button(onClick = {
+                    Prefs.setLocationAsked(ctx)
+                    locationLauncher.launch(Places.permissions())
+                }) { Text("位置情報を許可する") }
+            }
 
             Spacer(Modifier.height(8.dp))
             Text("Googleドライブ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

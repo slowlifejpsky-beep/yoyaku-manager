@@ -96,8 +96,8 @@ object Prefs {
     fun saveLocation(c: Context): Boolean = sp(c).getBoolean("saveLocation", true)
     fun setSaveLocation(c: Context, v: Boolean) = sp(c).edit().putBoolean("saveLocation", v).apply()
     /** 位置情報の許可を一度でも尋ねたか(断られたら何度も聞かないため) */
-    fun locationAsked(c: Context): Boolean = sp(c).getBoolean("locationAsked", false)
-    fun setLocationAsked(c: Context) = sp(c).edit().putBoolean("locationAsked", true).apply()
+    fun locationAsked(c: Context): Boolean = sp(c).getBoolean("locationAsked2", false)
+    fun setLocationAsked(c: Context) = sp(c).edit().putBoolean("locationAsked2", true).apply()
 
     fun setLiveModel(c: Context, v: String) = sp(c).edit().putString("liveModel", v.trim()).apply()
 
