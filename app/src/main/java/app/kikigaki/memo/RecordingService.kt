@@ -94,6 +94,15 @@ class RecordingService : Service() {
         recorder = rec
         liveTranscriber = lt
         lt?.start()
+        if (Prefs.saveLocation(this)) {
+            // 録音を始めた場所を記録する(取れなくても録音には影響しない)
+            scope.launch {
+                val place = Places.current(this@RecordingService) ?: return@launch
+                withContext(Dispatchers.IO) {
+                    synchronized(session) { session.writeMeta(session.readMeta().copy(place = place)) }
+                }
+            }
+        }
         transcript = ""
         dirty = false
         acquireWakeLock()
@@ -157,11 +166,13 @@ class RecordingService : Service() {
             if (!force && now - lastMetaAt < 5000) return
             lastMetaAt = now
             meta = meta.copy(
+                // 場所は別の処理があとから書き込むので、ファイル上の値を引き継ぐ
+                place = meta.place ?: session.readMeta().place,
                 durationMs = rec?.elapsedMs ?: meta.durationMs,
                 processedBytes = processed,
                 title = summary.title.ifBlank { meta.title },
             )
-            session.writeMeta(meta)
+            synchronized(session) { session.writeMeta(meta) }
         }
 
         while (true) {

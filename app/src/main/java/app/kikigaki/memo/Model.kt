@@ -55,6 +55,8 @@ data class Meta(
     val title: String = "",
     /** "" = 未保存, "done" = 保存済み, それ以外 = エラー内容 */
     val drive: String = "",
+    /** 録音を始めた場所。取れなかった場合は null */
+    val place: Place? = null,
 )
 
 enum class Phase { IDLE, RECORDING, FINISHING }
@@ -91,6 +93,12 @@ object Prefs {
     fun setLiveEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("liveEnabled", v).apply()
 
     fun liveModel(c: Context): String = sp(c).getString("liveModel", "")!!.trim()
+    fun saveLocation(c: Context): Boolean = sp(c).getBoolean("saveLocation", true)
+    fun setSaveLocation(c: Context, v: Boolean) = sp(c).edit().putBoolean("saveLocation", v).apply()
+    /** 位置情報の許可を一度でも尋ねたか(断られたら何度も聞かないため) */
+    fun locationAsked(c: Context): Boolean = sp(c).getBoolean("locationAsked", false)
+    fun setLocationAsked(c: Context) = sp(c).edit().putBoolean("locationAsked", true).apply()
+
     fun setLiveModel(c: Context, v: String) = sp(c).edit().putString("liveModel", v.trim()).apply()
 
     fun driveLinked(c: Context): Boolean = sp(c).getBoolean("driveLinked", false)
@@ -124,6 +132,7 @@ class Session(val dir: File) {
             processedBytes = o.optLong("processedBytes"),
             title = o.optString("title"),
             drive = o.optString("drive"),
+            place = if (o.has("lat") && o.has("lng")) Place(o.optDouble("lat"), o.optDouble("lng"), o.optString("address")) else null,
         )
     }
 
@@ -135,6 +144,7 @@ class Session(val dir: File) {
             .put("processedBytes", m.processedBytes)
             .put("title", m.title)
             .put("drive", m.drive)
+            .apply { m.place?.let { put("lat", it.lat).put("lng", it.lng).put("address", it.address) } }
             .toString(),
     )
 
@@ -169,7 +179,9 @@ class Session(val dir: File) {
         val s = readSummary()
         val sb = StringBuilder()
         sb.append(displayTitle()).append("\n")
-        sb.append(formatDate(m.startedAt)).append("  /  ").append(formatDuration(m.durationMs)).append("\n\n")
+        sb.append(formatDate(m.startedAt)).append("  /  ").append(formatDuration(m.durationMs)).append("\n")
+        m.place?.let { sb.append("場所: ").append(it.label).append("\n").append(it.mapsUrl).append("\n") }
+        sb.append("\n")
         if (s.overview.isNotBlank()) sb.append(s.overview).append("\n\n")
         fun section(name: String, items: List<String>) {
             sb.append("■ ").append(name).append("\n")

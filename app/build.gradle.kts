@@ -12,8 +12,8 @@ android {
         applicationId = "app.kikigaki.memo"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 9
+        versionName = "1.8"
     }
 
     // ビルドのたびに署名が変わると、上書きインストールとGoogleドライブ連携(SHA-1照合)が
@@ -61,4 +61,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
     implementation("com.google.android.gms:play-services-auth:21.3.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 }

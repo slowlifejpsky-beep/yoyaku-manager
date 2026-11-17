@@ -61,6 +61,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -74,6 +81,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -98,6 +106,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import java.io.File
 
 private val RecordRed = Color(0xFFD64545)
@@ -140,12 +149,10 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (phase != Phase.IDLE) return
-        val wanted = buildList {
-            add(Manifest.permission.RECORD_AUDIO)
-            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-        }
+        val ask = permissionsToAsk(this)
+        // マイクさえ許可済みなら、ほかの許可は聞かずにすぐ始める(ワンタップ録音を優先)
         if (hasPermission(this, Manifest.permission.RECORD_AUDIO)) startRecording(this)
-        else quickPermissionLauncher.launch(wanted.toTypedArray())
+        else quickPermissionLauncher.launch(ask)
     }
 
     companion object {
@@ -225,8 +232,33 @@ private fun HomeScreen(
 ) {
     val ctx = LocalContext.current
     val busy = live.phase != Phase.IDLE
-    val sessions = remember(live.phase, live.sessionId) { Sessions.list(ctx) }
+    var refresh by remember { mutableIntStateOf(0) }
+    val sessions = remember(live.phase, live.sessionId, refresh) { Sessions.list(ctx) }
     val hasKey = remember { Prefs.apiKey(ctx).isNotBlank() }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    // スワイプで消したが、まだ「元に戻す」が押せる記録
+    val hidden = remember { mutableStateListOf<String>() }
+
+    fun swipeDelete(s: Session) {
+        if (s.id in hidden) return
+        hidden.add(s.id)
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            val result = snackbar.showSnackbar(
+                message = "「${s.displayTitle()}」を削除しました",
+                actionLabel = "元に戻す",
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                hidden.remove(s.id)
+            } else {
+                withContext(Dispatchers.IO) { s.delete() }
+                hidden.remove(s.id)
+                refresh++
+            }
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -239,12 +271,8 @@ private fun HomeScreen(
     }
 
     fun onRecord() {
-        val wanted = buildList {
-            add(Manifest.permission.RECORD_AUDIO)
-            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        if (wanted.all { hasPermission(ctx, it) }) startRecording(ctx)
-        else permissionLauncher.launch(wanted.toTypedArray())
+        val ask = permissionsToAsk(ctx)
+        if (ask.isEmpty()) startRecording(ctx) else permissionLauncher.launch(ask)
     }
 
     Scaffold(
@@ -256,6 +284,7 @@ private fun HomeScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { pad ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(pad),
@@ -326,30 +355,96 @@ private fun HomeScreen(
                     )
                 }
             }
-            items(sessions, key = { it.id }) { s ->
+            items(sessions.filter { it.id !in hidden }, key = { it.id }) { s ->
                 val meta = remember(s.id, live.phase) { s.readMeta() }
                 val title = remember(s.id, live.phase) { s.displayTitle() }
-                Card(
-                    modifier = Modifier.fillMaxWidth().clickable { onOpen(s.id) },
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            buildString {
-                                append(formatDate(meta.startedAt))
-                                append("  ・  ")
-                                append(formatDuration(meta.durationMs))
-                                if (meta.drive == "done") append("  ・  ドライブ保存済み")
+                // 録音中・仕上げ中の記録は消せないようにする
+                val locked = busy && live.sessionId == s.id
+                val dismiss = rememberSwipeToDismissBoxState(
+                    confirmValueChange = { value ->
+                        if (value != SwipeToDismissBoxValue.Settled && !locked) {
+                            swipeDelete(s)
+                            true
+                        } else {
+                            false
+                        }
+                    },
+                )
+                SwipeToDismissBox(
+                    state = dismiss,
+                    enableDismissFromStartToEnd = !locked,
+                    enableDismissFromEndToStart = !locked,
+                    backgroundContent = {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(RecordRed)
+                                .padding(horizontal = 20.dp),
+                            contentAlignment = if (dismiss.dismissDirection == SwipeToDismissBoxValue.StartToEnd) {
+                                Alignment.CenterStart
+                            } else {
+                                Alignment.CenterEnd
                             },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        ) {
+                            Icon(Icons.Filled.Delete, contentDescription = "削除", tint = Color.White)
+                        }
+                    },
+                ) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable { onOpen(s.id) },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                buildString {
+                                    append(formatDate(meta.startedAt))
+                                    append("  ・  ")
+                                    append(formatDuration(meta.durationMs))
+                                    if (meta.drive == "done") append("  ・  ドライブ保存済み")
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            meta.place?.let { place ->
+                                Text(
+                                    "📍 ${place.label}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                     }
+                }
+            }
+            if (sessions.isNotEmpty()) {
+                item {
+                    Text(
+                        "記録を左右にスライドすると削除できます",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    )
                 }
             }
         }
     }
+}
+
+/** 録音前に尋ねる許可。位置情報は設定がオンで、まだ一度も尋ねていないときだけ */
+private fun permissionsToAsk(ctx: Context): Array<String> {
+    val wanted = buildList {
+        add(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+        if (Prefs.saveLocation(ctx) && !Places.granted(ctx) && !Prefs.locationAsked(ctx)) {
+            addAll(Places.permissions())
+            Prefs.setLocationAsked(ctx)
+        }
+    }
+    return wanted.filter { !hasPermission(ctx, it) }.toTypedArray()
 }
 
 private fun hasPermission(ctx: Context, permission: String) =
@@ -598,6 +693,21 @@ private fun DetailScreen(id: String, live: LiveState, onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                meta.place?.let { place ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().clickable { place.openInMaps(ctx) },
+                    ) {
+                        Text(
+                            "📍 ${place.label}",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        TextButton(onClick = { place.openInMaps(ctx) }) { Text("地図で開く") }
+                    }
+                }
                 if (working) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -729,6 +839,11 @@ private fun SettingsScreen(onBack: () -> Unit) {
     var apiKey by remember { mutableStateOf(Prefs.apiKey(ctx)) }
     var model by remember { mutableStateOf(Prefs.model(ctx)) }
     var liveOn by remember { mutableStateOf(Prefs.liveEnabled(ctx)) }
+    var saveLocation by remember { mutableStateOf(Prefs.saveLocation(ctx)) }
+    var locationGranted by remember { mutableStateOf(Places.granted(ctx)) }
+    val locationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { locationGranted = Places.granted(ctx) }
     var liveModel by remember { mutableStateOf(Prefs.liveModel(ctx)) }
     var linked by remember { mutableStateOf(Prefs.driveLinked(ctx)) }
     var auto by remember { mutableStateOf(Prefs.driveAuto(ctx)) }
@@ -808,6 +923,29 @@ private fun SettingsScreen(onBack: () -> Unit) {
                 label = { Text("Live API のモデル名(空欄で自動)") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
+            )
+
+            Spacer(Modifier.height(8.dp))
+            Text("録音した場所", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("録音を始めた場所を記録する", modifier = Modifier.weight(1f))
+                Switch(checked = saveLocation, onCheckedChange = {
+                    saveLocation = it
+                    Prefs.setSaveLocation(ctx, it)
+                    if (it && !Places.granted(ctx)) {
+                        Prefs.setLocationAsked(ctx)
+                        locationLauncher.launch(Places.permissions())
+                    }
+                })
+            }
+            Text(
+                when {
+                    !saveLocation -> "オフのあいだは場所を記録しません。"
+                    locationGranted -> "記録の画面に住所が出て、タップするとGoogleマップで開きます。ドライブの要約ドキュメントにも地図へのリンクが入ります。"
+                    else -> "位置情報が許可されていないため、場所は記録されません。スマホの設定 → アプリ → ききがきメモ → 権限 から「位置情報」を許可してください。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             Spacer(Modifier.height(8.dp))

@@ -158,6 +158,10 @@ object Drive {
         sb.append("<h1>").append(esc(session.displayTitle())).append("</h1>")
         sb.append("<p>").append(esc(formatDate(m.startedAt))).append(" / 録音時間 ")
             .append(formatDuration(m.durationMs)).append("</p>")
+        m.place?.let {
+            sb.append("<p>場所: <a href=\"").append(esc(it.mapsUrl)).append("\">").append(esc(it.label))
+                .append("</a>(Googleマップで開く)</p>")
+        }
         if (s.overview.isNotBlank()) sb.append("<p>").append(esc(s.overview)).append("</p>")
         fun section(name: String, items: List<String>) {
             sb.append("<h2>").append(name).append("</h2>")
