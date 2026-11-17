@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_record"
+        android:shortcutId="record"
+        android:shortcutLongLabel="@string/shortcut_record_long"
+        android:shortcutShortLabel="@string/shortcut_record_short">
+        <intent
+            android:action="app.kikigaki.memo.QUICK_RECORD"
+            android:targetClass="app.kikigaki.memo.MainActivity"
+            android:targetPackage="app.kikigaki.memo" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_stop"
+        android:shortcutId="stop"
+        android:shortcutLongLabel="@string/shortcut_stop_long"
+        android:shortcutShortLabel="@string/shortcut_stop_short">
+        <intent
+            android:action="app.kikigaki.memo.QUICK_STOP"
+            android:targetClass="app.kikigaki.memo.MainActivity"
+            android:targetPackage="app.kikigaki.memo" />
+    </shortcut>
+</shortcuts>

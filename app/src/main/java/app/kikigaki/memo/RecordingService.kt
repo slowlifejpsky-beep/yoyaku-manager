@@ -20,6 +20,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.RandomAccessFile
@@ -47,6 +49,16 @@ class RecordingService : Service() {
     private var dirty = false
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        // 録音の状態が変わるたびに、ホーム画面のウィジェットの表示を合わせる
+        scope.launch {
+            Live.state.map { it.phase }.distinctUntilChanged().collect {
+                RecordWidget.updateAll(this@RecordingService)
+            }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -406,6 +418,7 @@ class RecordingService : Service() {
         if (Live.state.value.phase != Phase.IDLE) {
             Live.update { it.copy(phase = Phase.IDLE) }
         }
+        RecordWidget.updateAll(this)
         super.onDestroy()
     }
 

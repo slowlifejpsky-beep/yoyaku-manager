@@ -109,9 +109,54 @@ private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 private val driveProgress = mutableStateMapOf<String, String>()
 
 class MainActivity : ComponentActivity() {
+
+    private val quickPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            if (hasPermission(this, Manifest.permission.RECORD_AUDIO)) {
+                startRecording(this)
+            } else {
+                Toast.makeText(this, "録音するにはマイクの許可が必要です", Toast.LENGTH_LONG).show()
+            }
+        }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleQuickAction(intent)
+    }
+
+    /** ウィジェットやショートカットから来た「すぐ録音」「停止」を処理する */
+    private fun handleQuickAction(intent: Intent?) {
+        val action = intent?.action ?: return
+        if (action != ACTION_QUICK_RECORD && action != ACTION_QUICK_STOP) return
+        // 画面の回転などで同じ指示をもう一度実行しないよう、処理したら消しておく
+        intent.action = null
+        val phase = Live.state.value.phase
+        if (action == ACTION_QUICK_STOP) {
+            if (phase == Phase.RECORDING) {
+                startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_STOP))
+            } else {
+                Toast.makeText(this, "いまは録音していません", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+        if (phase != Phase.IDLE) return
+        val wanted = buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (hasPermission(this, Manifest.permission.RECORD_AUDIO)) startRecording(this)
+        else quickPermissionLauncher.launch(wanted.toTypedArray())
+    }
+
+    companion object {
+        const val ACTION_QUICK_RECORD = "app.kikigaki.memo.QUICK_RECORD"
+        const val ACTION_QUICK_STOP = "app.kikigaki.memo.QUICK_STOP"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (savedInstanceState == null) handleQuickAction(intent)
         setContent {
             val colors = if (isSystemInDarkTheme()) {
                 darkColorScheme(primary = Color(0xFF7FCFD8), secondary = Color(0xFFE0B98A))

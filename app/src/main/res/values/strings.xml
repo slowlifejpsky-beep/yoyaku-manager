@@ -1,3 +1,11 @@
 <resources>
     <string name="app_name">ききがきメモ</string>
+    <string name="widget_label_record">録音</string>
+    <string name="widget_label_stop">停止</string>
+    <string name="widget_label_finishing">仕上げ中</string>
+    <string name="widget_description">ワンタップで録音を開始・停止します</string>
+    <string name="shortcut_record_short">録音開始</string>
+    <string name="shortcut_record_long">すぐに録音を開始</string>
+    <string name="shortcut_stop_short">録音停止</string>
+    <string name="shortcut_stop_long">録音を停止して保存</string>
 </resources>
